@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Typing Surge</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            font-family: Arial, sans-serif;
+            background: #111;
+        }
+
+        #gameCanvas {
+            position: fixed;
+            top: 0;
+            left: 0;
+        }
+
+        .ui-overlay {
+            position: fixed;
+            top: 10px;
+            left: 10px;
+            color: white;
+            font-size: 20px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+            pointer-events: none;
+        }
+
+        .high-score {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            color: white;
+            font-size: 20px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+        }
+
+        .menu {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0,0,0,0.9);
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
+            color: white;
+            min-width: 300px;
+        }
+
+        .menu h1 {
+            color: #fff;
+            font-size: 48px;
+            margin: 0;
+            text-shadow: 0 0 10px rgba(255,255,255,0.5);
+        }
+
+        .menu p {
+            color: #aaa;
+            margin: 20px 0;
+        }
+
+        .menu button {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            font-size: 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: transform 0.2s;
+            margin: 10px;
+        }
+
+        .menu button:hover {
+            transform: scale(1.05);
+        }
+
+        .difficulty-select {
+            margin: 20px 0;
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+        }
+
+        .difficulty-btn {
+            background: #333;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+
+        .difficulty-btn.selected {
+            background: #4CAF50;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <div class="ui-overlay">
+        Score: <span id="score">0</span><br>
+        Level: <span id="level">1</span>
+    </div>
+    <div class="high-score">
+        High Score: <span id="highScore">0</span>
+    </div>
+    <div id="menuScreen" class="menu">
+        <h1>Typing Surge</h1>
+        <p>Type the letters before they reach the center!</p>
+        <div class="difficulty-select">
+            <button class="difficulty-btn selected" data-difficulty="easy">Easy</button>
+            <button class="difficulty-btn" data-difficulty="medium">Medium</button>
+            <button class="difficulty-btn" data-difficulty="hard">Hard</button>
+        </div>
+        <p class="difficulty-desc">Easy: Single letters, slow speed</p>
+        <button onclick="startGame()">Start Game</button>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const menuScreen = document.getElementById('menuScreen');
+
+        // Game state
+        let gameLoop;
+        let particles = [];
+        let score = 0;
+        let level = 1;
+        let gameActive = false;
+        let highScore = localStorage.getItem('typingSurgeHighScore') || 0;
+        let difficulty = 'easy';
+        document.getElementById('highScore').textContent = highScore;
+
+        // Difficulty settings
+        const difficultySettings = {
+            easy: {
+                charLength: 1,
+                baseSpeed: 1,
+                speedIncrement: 0.1,
+                spawnInterval: 2000,
+                particlePool: ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z']
+            },
+            medium: {
+                charLength: 2,
+                baseSpeed: 1.5,
+                speedIncrement: 0.15,
+                spawnInterval: 1500,
+                particlePool: ['th', 'he', 'an', 'in', 'er', 'on', 'at', 'es', 'st', 'en', 'ed', 'to', 'it', 'ou', 'ea']
+            },
+            hard: {
+                charLength: 3,
+                baseSpeed: 2,
+                speedIncrement: 0.2,
+                spawnInterval: 1000,
+                particlePool: ['the', 'and', 'ing', 'her', 'you', 'was', 'for', 'that', 'with', 'have']
+            }
+        };
+
+        // Set up difficulty buttons
+        document.querySelectorAll('.difficulty-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.difficulty-btn').forEach(b => b.classList.remove('selected'));
+                btn.classList.add('selected');
+                difficulty = btn.dataset.difficulty;
+                updateDifficultyDescription();
+            });
+        });
+
+        function updateDifficultyDescription() {
+            const descriptions = {
+                easy: 'Easy: Single letters, slow speed',
+                medium: 'Medium: Two-letter combinations, moderate speed',
+                hard: 'Hard: Three-letter words, fast speed'
+            };
+            document.querySelector('.difficulty-desc').textContent = descriptions[difficulty];
+        }
+
+        // Resize canvas
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        // Particle class
+        class Particle {
+            constructor() {
+                this.reset();
+            }
+
+            reset() {
+                const settings = difficultySettings[difficulty];
+                const side = Math.floor(Math.random() * 4);
+                this.text = settings.particlePool[Math.floor(Math.random() * settings.particlePool.length)];
+                
+                switch(side) {
+                    case 0: // top
+                        this.x = Math.random() * canvas.width;
+                        this.y = -20;
+                        this.vx = (Math.random() - 0.5) * 2;
+                        this.vy = 1 + Math.random() * 2;
+                        break;
+                    case 1: // right
+                        this.x = canvas.width + 20;
+                        this.y = Math.random() * canvas.height;
+                        this.vx = -(1 + Math.random() * 2);
+                        this.vy = (Math.random() - 0.5) * 2;
+                        break;
+                    case 2: // bottom
+                        this.x = Math.random() * canvas.width;
+                        this.y = canvas.height + 20;
+                        this.vx = (Math.random() - 0.5) * 2;
+                        this.vy = -(1 + Math.random() * 2);
+                        break;
+                    case 3: // left
+                        this.x = -20;
+                        this.y = Math.random() * canvas.height;
+                        this.vx = 1 + Math.random() * 2;
+                        this.vy = (Math.random() - 0.5) * 2;
+                        break;
+                }
+                
+                this.size = 20;
+                this.speed = difficultySettings[difficulty].baseSpeed + (level * difficultySettings[difficulty].speedIncrement);
+                this.color = '#fff';
+            }
+
+            update() {
+                this.x += this.vx * this.speed;
+                this.y += this.vy * this.speed;
+
+                // Check if particle is off screen
+                if (this.x < -50 || this.x > canvas.width + 50 ||
+                    this.y < -50 || this.y > canvas.height + 50) {
+                    this.reset();
+                }
+
+                // Check collision with center
+                const dx = this.x - canvas.width/2;
+                const dy = this.y - canvas.height/2;
+                const distance = Math.sqrt(dx*dx + dy*dy);
+                
+                if (distance < 30) {
+                    gameOver();
+                }
+            }
+
+            draw() {
+                ctx.fillStyle = this.color;
+                ctx.font = `${this.size}px Arial`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(this.text, this.x, this.y);
+            }
+        }
+
+        function startGame() {
+            gameActive = true;
+            score = 0;
+            level = 1;
+            document.getElementById('score').textContent = score;
+            document.getElementById('level').textContent = level;
+            menuScreen.style.display = 'none';
+            particles = [];
+            
+            // Create initial particles
+            for (let i = 0; i < 5; i++) {
+                particles.push(new Particle());
+            }
+
+            // Start game loop
+            if (gameLoop) clearInterval(gameLoop);
+            gameLoop = setInterval(gameUpdate, 1000/60);
+
+            // Start level increment
+            setTimeout(incrementLevel, 10000);
+
+            // Start particle spawning
+            spawnParticles();
+        }
+
+        function spawnParticles() {
+            if (gameActive) {
+                particles.push(new Particle());
+                setTimeout(spawnParticles, difficultySettings[difficulty].spawnInterval);
+            }
+        }
+
+        function incrementLevel() {
+            if (gameActive) {
+                level++;
+                document.getElementById('level').textContent = level;
+                setTimeout(incrementLevel, 10000);
+            }
+        }
+
+        function gameOver() {
+            gameActive = false;
+            clearInterval(gameLoop);
+            menuScreen.style.display = 'block';
+            menuScreen.querySelector('h1').textContent = 'Game Over!';
+            menuScreen.querySelector('p').textContent = 
+                `Final Score: ${score}\nHigh Score: ${highScore}\n\nTry again?`;
+        }
+
+        function gameUpdate() {
+            // Clear canvas
+            ctx.fillStyle = '#111';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Draw center target
+            ctx.beginPath();
+            ctx.arc(canvas.width/2, canvas.height/2, 30, 0, Math.PI * 2);
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 3;
+            ctx.stroke();
+
+            // Update and draw particles
+            particles.forEach(particle => {
+                particle.update();
+                particle.draw();
+            });
+        }
+
+        // Keyboard input handling
+        let currentInput = '';
+        document.addEventListener('keydown', (e) => {
+            if (!gameActive) return;
+            
+            if (e.key === 'Backspace') {
+                currentInput = currentInput.slice(0, -1);
+            } else if (e.key.length === 1) {
+                currentInput += e.key.toLowerCase();
+                
+                // Check for matches
+                particles.forEach((particle, index) => {
+                    if (currentInput.endsWith(particle.text)) {
+                        // Remove the particle
+                        particles.splice(index, 1);
+                        // Add score
+                        score += particle.text.length * 10;
+                        document.getElementById('score').textContent = score;
+                        if (score > highScore) {
+                            highScore = score;
+                            localStorage.setItem('typingSurgeHighScore', highScore);
+                            document.getElementById('highScore').textContent = highScore;
+                        }
+                        // Reset current input
+                        currentInput = '';
+                    }
+                });
+            }
+        });
+
+        // Initial render
+        gameUpdate();
+    </script>
+</body>
+</html>
